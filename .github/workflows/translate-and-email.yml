@@ -1,4 +1,4 @@
-name: Translate Text File to Hindi and Email
+name: Translate Text File to Hindi
 
 on:
   pull_request:
@@ -7,17 +7,18 @@ on:
       - 'uploads/**/*.txt'
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: read
 
 jobs:
-  translate-and-email:
+  translate:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           fetch-depth: 2
 
       - name: Set up Python
@@ -31,34 +32,22 @@ jobs:
       - name: Get changed txt files
         id: changed-files
         run: |
-          FILES=$(git diff --name-only --diff-filter=A HEAD~1 HEAD -- 'uploads/*.txt' || \
-                  git diff --name-only --diff-filter=A origin/${{ github.base_ref }}...HEAD -- 'uploads/*.txt')
-          echo "files=$FILES" >> $GITHUB_OUTPUT
+          FILES=$(git diff --name-only --diff-filter=A HEAD~1 HEAD -- 'uploads/*.txt' | grep -v '_hindi\.txt$' || true)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Get PR author email
-        id: pr-author
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            const user = await github.rest.users.getByUsername({
-              username: pr.data.user.login
-            });
-            core.setOutput('email', user.data.email || '');
-            core.setOutput('username', pr.data.user.login);
-
-      - name: Translate and send email
+      - name: Translate files
+        if: steps.changed-files.outputs.files != ''
         env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-          RECIPIENT_EMAIL: ${{ steps.pr-author.outputs.email }}
-          PR_AUTHOR: ${{ steps.pr-author.outputs.username }}
           CHANGED_FILES: ${{ steps.changed-files.outputs.files }}
         run: python scripts/translate_and_email.py
+
+      - name: Commit translated files
+        if: steps.changed-files.outputs.files != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add uploads/*_hindi.txt
+          git diff --cached --quiet || git commit -m "Add Hindi translation(s)"
+          git push
